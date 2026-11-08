@@ -39,6 +39,8 @@ svg{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
 #menu button{display:block;width:100%;text-align:left;padding:12px 14px;background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink);font:inherit;cursor:pointer}
 #menu button:hover{background:#262c5a}
 #panel input{margin:10px 0}
+#panel{max-height:80vh;overflow:auto}
+#panel a{color:#9db0ff}
 #panel label{color:var(--mute);font-size:13px}
 @media (max-width:600px){
  input{font-size:16px}
@@ -59,7 +61,7 @@ svg{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
     <button class="t" id="menuBtn" aria-haspopup="true">Menü</button>
     <div id="menu">
       <button id="mAlbum">Album selbst anlegen</button>
-      <button id="mGenre">Genre hinzufügen</button>
+      <button id="mGenre">Genres verwalten</button>
       <button id="mExport">Profil exportieren</button>
       <button id="mImport">Profil importieren</button>
       <button id="demo">Beispiel laden</button>
@@ -176,7 +178,7 @@ function build(){
     const g=el("g",{class:"node"},gn);n.g=g;
     if(n.t==="root"){el("circle",{r:n.r,fill:"#e9ecf8"},g);el("circle",{r:n.r-9,fill:"#14172b"},g);const t=el("text",{y:n.r+22,style:"font-size:16px"},g);t.textContent=center}
     else if(n.t==="genre"){const cl=collapsed.has(n.label);if(cl)el("circle",{r:n.r+6,fill:"none",stroke:n.color,"stroke-width":2,"stroke-dasharray":"4 4"},g);el("circle",{r:n.r,fill:n.color},g);const t=el("text",{y:n.r+(cl?26:18)},g);t.textContent=n.label+(cl?" ▸":"");
-      const c=albums.filter(a=>a.genre===n.label).length;const k=el("text",{y:5,style:"fill:#14172b"},g);k.textContent=c;const bd=el("g",{transform:`translate(${n.r*.78},${-n.r*.78})`},g);el("circle",{r:13,fill:"#14172b",stroke:n.color,"stroke-width":2,"data-edit":"1"},bd);const pe=el("text",{y:4,style:"font-size:13px"},bd);pe.textContent="✎"}
+      const c=albums.filter(a=>a.genre===n.label).length;const k=el("text",{y:5,style:"fill:#14172b"},g);k.textContent=c}
     else{
       const cid="c"+n.id.replace(/\W/g,"");
       el("circle",{r:n.r,cx:0,cy:0},el("clipPath",{id:cid},defs));
@@ -222,7 +224,7 @@ function paint(){
 // Ziehen, Schwenken, Zoomen (Maus und Touch, inkl. Zwei-Finger-Zoom)
 let dragging=null,panning=null,moved=0,pinch=null;const ptrs=new Map();
 const world=e=>({x:(e.clientX-T.x)/T.k,y:(e.clientY-T.y)/T.k});
-function startDrag(e,n){if(ptrs.size>1)return;e.stopPropagation();n.edit=!!(e.target.dataset&&e.target.dataset.edit);dragging=n;n.drag=true;moved=0;n.sx=e.clientX;n.sy=e.clientY;heat(.6)}
+function startDrag(e,n){if(ptrs.size>1)return;e.stopPropagation();dragging=n;n.drag=true;moved=0;n.sx=e.clientX;n.sy=e.clientY;heat(.6)}
 svg.addEventListener("pointerdown",e=>{
   ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===2){const[a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1,k:T.k,tx:T.x,ty:T.y,cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};if(dragging){dragging.drag=false;dragging=null}panning=null;moved=99}
@@ -248,7 +250,6 @@ addEventListener("pointerup",up);addEventListener("pointercancel",up);
 function tap(n){
   if(n.t==="album")select(n.id);
   else if(n.t==="root")editRoot();
-  else if(n.edit)editGenre(n.label);
   else{const g=n.label;collapsed.has(g)?collapsed.delete(g):collapsed.add(g);if(sel&&albums.find(a=>a.id===sel)?.genre===g)closePanel();save();build()}
 }
 svg.addEventListener("wheel",e=>{
@@ -268,12 +269,18 @@ function select(id){
   const p2=document.createElement("p");p2.textContent=a.manual?"Selbst angelegt":a.tags.length?"Tags: "+[...a.tags].sort((x,y)=>y.count-x.count).slice(0,6).map(t=>t.name).join(", "):"Keine Tags im Register gefunden";
   const sl=document.createElement("select");sl.setAttribute("aria-label","Genre ändern");
   allOptions().forEach(g=>{const o=new Option(g,g,false,g===a.genre);sl.add(o)});
-  sl.onchange=()=>{a.genre=sl.value;save();build()};
+  sl.add(new Option("＋ Neues Genre …","__new"));
+  sl.onchange=()=>{
+    if(sl.value==="__new"){const n=addGenrePrompt();if(!n){sl.value=a.genre;return}a.genre=n;save();build();select(id);return}
+    a.genre=sl.value;save();build();
+  };
   const row=document.createElement("div");row.className="row";
   const del=Object.assign(document.createElement("button"),{className:"t",textContent:"Entfernen"});
   del.onclick=()=>{albums=albums.filter(x=>x.id!==id);delete pos[id];save();closePanel();build()};
   const cl=Object.assign(document.createElement("button"),{className:"t",textContent:"Schließen"});cl.onclick=closePanel;
-  const ed=Object.assign(document.createElement("button"),{className:"t",textContent:"Bearbeiten"});ed.onclick=()=>albumForm(a);row.append(ed,del,cl);panel.append(im,h,p1,p2,sl,row);panel.style.display="block";
+  const ed=Object.assign(document.createElement("button"),{className:"t",textContent:"Bearbeiten"});ed.onclick=()=>albumForm(a);row.append(ed,del,cl);const tl=mk("p",{id:"tl"});tl.dataset.for=id;fillTidal(tl,a);
+  if(!a.manual&&!a.tidal&&!a.tidalChecked&&!/^demo/.test(id))findTidal(a);
+  panel.append(im,h,p1,tl,p2,sl,row);panel.style.display="block";
 }
 
 // ---------- Genres bearbeiten ----------
@@ -288,6 +295,42 @@ function renameGenre(o,n){
   if(pos["g:"+o]){pos["g:"+n]=pos["g:"+o];delete pos["g:"+o]}
 }
 const mk=(tag,props)=>Object.assign(document.createElement(tag),props);
+function addGenrePrompt(){
+  const n=(prompt("Name des neuen Genres:")||"").trim().slice(0,30);if(!n)return null;
+  if(!allGenres().includes(n)){const free=PALETTE.find(c=>!allGenres().some(g=>colorOf(g)===c));customGenres.push(n);if(free&&!genreColors[n])genreColors[n]=free}
+  save();return n;
+}
+function manageGenres(){
+  panel.innerHTML="";panel.append(mk("h2",{textContent:"Genres"}));
+  allGenres().forEach(g=>{
+    const b=mk("button",{className:"t",textContent:g});b.style.cssText="display:flex;align-items:center;gap:10px;width:100%;text-align:left;margin-top:8px";
+    const dot=mk("span");dot.style.cssText="width:14px;height:14px;border-radius:50%;flex:none";dot.style.background=colorOf(g);
+    b.prepend(dot);b.onclick=()=>editGenre(g);panel.append(b);
+  });
+  const row=mk("div",{className:"row"});row.style.marginTop="10px";
+  const nw=mk("button",{className:"t",textContent:"＋ Neues Genre"}),cl=mk("button",{className:"t",textContent:"Schließen"});
+  nw.onclick=()=>editGenre(null);cl.onclick=closePanel;row.append(nw,cl);panel.append(row);panel.style.display="block";
+}
+const TIDAL=/^https?:\/\/([a-z]+\.)?tidal\.com\/.*album\/\d+/i;
+function fillTidal(e,a){
+  e.textContent="";const l=document.createElement("a");l.target="_blank";l.rel="noopener noreferrer";
+  if(a.tidal){l.href=a.tidal;l.textContent="Auf Tidal anhören"}
+  else if(a.tidalChecked||a.manual||/^demo/.test(a.id)){l.href="https://listen.tidal.com/search?q="+encodeURIComponent(a.title+" "+a.artist);l.textContent="Auf Tidal suchen"}
+  else{e.textContent="Tidal-Link wird gesucht …";return}
+  e.append(l);
+}
+async function findTidal(a){
+  try{
+    const r=await fetch(`https://musicbrainz.org/ws/2/release?release-group=${a.id}&inc=url-rels&fmt=json&limit=100`);
+    if(!r.ok)return;
+    const j=await r.json();
+    outer:for(const rel of j.releases||[])for(const x of rel.relations||[]){
+      const u=x.url&&x.url.resource;if(u&&TIDAL.test(u)){a.tidal=u.replace(/^http:/,"https:");break outer}
+    }
+    a.tidalChecked=true;save();
+    const e=document.getElementById("tl");if(e&&e.dataset.for===a.id)fillTidal(e,a);
+  }catch(err){}
+}
 function editGenre(name){
   const isNew=name==null;panel.innerHTML="";
   const i=mk("input",{id:"gn",value:name||"",maxLength:30,placeholder:"z. B. Lieblingsplatten"});
@@ -298,9 +341,9 @@ function editGenre(name){
   const apply=()=>{
     const nw=i.value.trim();if(!nw){i.focus();return}
     if(isNew){if(!allGenres().includes(nw))customGenres.push(nw)}else renameGenre(name,nw);
-    genreColors[nw]=c.value;save();closePanel();build();
+    genreColors[nw]=c.value;save();build();manageGenres();
   };
-  ok.onclick=apply;cl.onclick=closePanel;i.onkeydown=e=>{if(e.key==="Enter")apply()};
+  ok.onclick=apply;cl.onclick=manageGenres;i.onkeydown=e=>{if(e.key==="Enter")apply()};
   row.append(ok);
   if(!isNew&&name!==A("Sonstige")){
     const del=mk("button",{className:"t",textContent:"Löschen"});
@@ -309,7 +352,7 @@ function editGenre(name){
       if(n&&!confirm(n+" Album(en) wandern nach „"+t+"“. Genre „"+name+"“ löschen?"))return;
       albums.forEach(a=>{if(a.genre===name)a.genre=t});
       customGenres=customGenres.filter(g=>g!==name);delete genreColors[name];collapsed.delete(name);delete pos["g:"+name];
-      save();closePanel();build();
+      save();build();manageGenres();
     };
     row.append(del);
   }
@@ -332,16 +375,25 @@ function albumForm(a,pre){
   const t=fld("Titel",mk("input",{value:d.title,maxLength:120}));
   const ar=fld("Interpret",mk("input",{value:d.artist,maxLength:120}));
   const y=fld("Jahr (optional)",mk("input",{value:d.year||"",maxLength:4,inputMode:"numeric"}));
-  const sl=fld("Genre",mk("select",{}));allOptions().forEach(g=>sl.add(new Option(g,g)));sl.value=d.genre||A("Sonstige");
+  const sl=fld("Genre",mk("select",{}));allOptions().forEach(g=>sl.add(new Option(g,g)));sl.add(new Option("＋ Neues Genre …","__new"));
+  let prev=d.genre||A("Sonstige");sl.value=prev;
+  sl.onchange=()=>{
+    if(sl.value!=="__new"){prev=sl.value;return}
+    const n=addGenrePrompt();if(!n){sl.value=prev;return}
+    if(![...sl.options].some(o=>o.value===n))sl.add(new Option(n,n),sl.options.length-1);
+    sl.value=n;prev=n;
+  };
   const pv=new Image();pv.alt="Vorschau";pv.style.maxWidth="120px";const cur=imgOf(d);if(cur)pv.src=cur;else pv.style.display="none";
   const fi=mk("input",{type:"file",accept:"image/*"});
   fi.onchange=()=>{const f=fi.files[0];if(f)resize(f,u=>{d.img=u;pv.src=u;pv.style.display="block"})};
   fld("Cover (Bild vom Gerät)",fi);panel.append(pv);
+  const tdl=fld("Tidal-Link (optional)",mk("input",{value:d.tidal||"",placeholder:"https://tidal.com/browse/album/…",maxLength:300}));
   const row=mk("div",{className:"row"});row.style.marginTop="10px";
   const ok=mk("button",{className:"t",textContent:"Speichern"}),cl=mk("button",{className:"t",textContent:"Abbrechen"});
   ok.onclick=()=>{
     const ti=t.value.trim();if(!ti){t.focus();return}
     Object.assign(d,{title:ti,artist:ar.value.trim()||"Unbekannt",year:y.value.trim(),genre:sl.value});
+    const tv=tdl.value.trim();if(TIDAL.test(tv)){d.tidal=tv.replace(/^http:/,"https:");d.tidalChecked=true}else if(!tv)delete d.tidal;
     if(isNew)albums.push(d);else albums[albums.findIndex(x=>x.id===d.id)]=d;
     save();closePanel();build();select(d.id);
   };
@@ -349,7 +401,7 @@ function albumForm(a,pre){
   row.append(ok,cl);panel.append(row);panel.style.display="block";t.focus();
 }
 document.getElementById("mAlbum").onclick=()=>albumForm(null,"");
-document.getElementById("mGenre").onclick=()=>editGenre(null);
+document.getElementById("mGenre").onclick=()=>manageGenres();
 // ---------- Mitte bearbeiten ----------
 function editRoot(){
   panel.innerHTML="";
@@ -379,7 +431,7 @@ file.onchange=async()=>{
     const d=JSON.parse(await f.text());
     if(!Array.isArray(d.albums))throw new Error("kein Album-Profil");
     if(albums.length&&!confirm("Das aktuelle Profil auf diesem Gerät wird ersetzt. Fortfahren?"))return;
-    albums=d.albums.filter(a=>a&&a.id&&a.title).map(a=>({id:String(a.id),title:String(a.title),artist:String(a.artist||""),year:String(a.year||""),tags:Array.isArray(a.tags)?a.tags:[],genre:String(a.genre||"Sonstige"),manual:!!a.manual,img:/^data:image\//.test(a.img||"")?a.img:undefined}));
+    albums=d.albums.filter(a=>a&&a.id&&a.title).map(a=>({id:String(a.id),title:String(a.title),artist:String(a.artist||""),year:String(a.year||""),tags:Array.isArray(a.tags)?a.tags:[],genre:String(a.genre||"Sonstige"),manual:!!a.manual,tidalChecked:!!a.tidalChecked,tidal:TIDAL.test(a.tidal||"")?String(a.tidal).replace(/^http:/,"https:"):undefined,img:/^data:image\//.test(a.img||"")?a.img:undefined}));
     const ob=o=>o&&typeof o==="object"&&!Array.isArray(o)?o:{};
     customGenres=Array.isArray(d.customGenres)?d.customGenres.map(String):[];
     genreColors=Object.fromEntries(Object.entries(ob(d.genreColors)).filter(([,v])=>/^#[0-9a-f]{6}$/i.test(v)));

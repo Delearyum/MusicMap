@@ -64,6 +64,7 @@ svg{position:fixed;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
   <div id="mw">
     <button class="t" id="menuBtn" aria-haspopup="true">Menü</button>
     <div id="menu">
+      <button id="mFit">Ansicht einpassen</button>
       <button id="mAlbum">Album selbst anlegen</button>
       <button id="mGenre">Genres verwalten</button>
       <button id="mExport">Profil exportieren</button>
@@ -105,12 +106,13 @@ const colorOf=g=>{if(genreColors[g])return genreColors[g];let h=0;for(const c of
 // ---------- Zustand ----------
 let albums=[];
 try{albums=JSON.parse(localStorage.getItem("albummap")||"[]")}catch(e){}
-let center="Meine Musik",collapsed=new Set(),customGenres=[],genreColors={},genreAlias={};
-try{const m=JSON.parse(localStorage.getItem("albummap-meta")||"{}");if(m.center)center=m.center;collapsed=new Set(m.collapsed||[]);customGenres=m.customGenres||[];genreColors=m.genreColors||{};genreAlias=m.genreAlias||{}}catch(e){}
+let center="Meine Musik",collapsed=new Set(),customGenres=[],genreColors={},genreAlias={},genreOrder=[],genreImgs={};
+try{const m=JSON.parse(localStorage.getItem("albummap-meta")||"{}");if(m.center)center=m.center;collapsed=new Set(m.collapsed||[]);customGenres=m.customGenres||[];genreColors=m.genreColors||{};genreAlias=m.genreAlias||{};genreOrder=m.genreOrder||[];genreImgs=m.genreImgs||{}}catch(e){}
 let warned=0;
-const save=()=>{try{localStorage.setItem("albummap",JSON.stringify(albums));localStorage.setItem("albummap-meta",JSON.stringify({center,collapsed:[...collapsed],customGenres,genreColors,genreAlias}))}catch(e){if(!warned++)alert("Speichern im Browser nicht möglich (Speicher voll?). Exportiere dein Profil über das Menü als Sicherung.")}};
+const save=()=>{try{localStorage.setItem("albummap",JSON.stringify(albums));localStorage.setItem("albummap-meta",JSON.stringify({center,collapsed:[...collapsed],customGenres,genreColors,genreAlias,genreOrder,genreImgs}))}catch(e){if(!warned++)alert("Speichern im Browser nicht möglich (Speicher voll?). Exportiere dein Profil über das Menü als Sicherung.")}};
 const A=g=>genreAlias[g]||g;
 const allGenres=()=>[...new Set([...albums.map(a=>a.genre),...customGenres])];
+const orderedGenres=()=>allGenres().map((g,i)=>[g,i]).sort((a,b)=>{const x=genreOrder.indexOf(a[0]),y=genreOrder.indexOf(b[0]);return (x<0?1e6:x)-(y<0?1e6:y)||a[1]-b[1]}).map(x=>x[0]);
 const allOptions=()=>[...new Set([...GENRES.map(g=>A(g[0])),A("Sonstige"),...customGenres,...albums.map(x=>x.genre)])];
 const cover=id=>`https://coverartarchive.org/release-group/${id}/front-250`;
 const imgOf=a=>a.img||(a.manual?null:cover(a.id));
@@ -158,31 +160,34 @@ function add(a){
 const NS="http://www.w3.org/2000/svg",svg=document.getElementById("svg"),view=document.getElementById("view"),
   gl=document.getElementById("links"),gn=document.getElementById("nodes"),defs=document.getElementById("defs");
 const el=(n,at={},p)=>{const e=document.createElementNS(NS,n);for(const k in at)e.setAttribute(k,at[k]);if(p)p.append(e);return e};
-let nodes=[],links=[],pos={},T={x:innerWidth/2,y:innerHeight/2,k:1},alpha=0,raf=0,sel=null;
+let nodes=[],links=[],pos={},T={x:innerWidth/2,y:innerHeight/2,k:1},raf=0,sel=null,fitted=false;
 
 function build(){
   gl.innerHTML="";gn.innerHTML="";defs.innerHTML="";
   document.getElementById("hint").style.display=albums.length?"none":"block";
-  const gset=allGenres();
-  nodes=[{id:"root",t:"root",r:30,fixed:true}];links=[];
-  gset.forEach(g=>{nodes.push({id:"g:"+g,t:"genre",r:34,label:g,color:colorOf(g)});links.push(["root","g:"+g,190])});
-  albums.filter(a=>!collapsed.has(a.genre)).forEach(a=>{nodes.push({id:a.id,t:"album",r:38,a,color:colorOf(a.genre)});links.push(["g:"+a.genre,a.id,125])});
-  const byId={};
-  nodes.forEach((n,i)=>{
-    byId[n.id]=n;
+  const gset=orderedGenres(),G=gset.length;
+  nodes=[{id:"root",t:"root",r:30,fixed:true,x:0,y:0,vx:0,vy:0}];const rootN=nodes[0],pairs=[],byId={root:rootN};
+  gset.forEach((g,gi)=>{const n={id:"g:"+g,t:"genre",r:38,label:g,color:colorOf(g),gi};nodes.push(n);byId[n.id]=n;pairs.push([rootN,n,220])});
+  albums.filter(a=>!collapsed.has(a.genre)).forEach(a=>{const n={id:a.id,t:"album",r:38,a,gen:a.genre,color:colorOf(a.genre)};nodes.push(n);byId[n.id]=n;pairs.push([byId["g:"+a.genre],n,140])});
+  nodes.forEach(n=>{
+    if(n.t==="root"){return}
     const p=pos[n.id];
-    if(p){n.x=p.x;n.y=p.y}else if(n.t==="root"){n.x=0;n.y=0}else{
-      const par=n.t==="album"?pos["g:"+n.a.genre]:null,ang=Math.random()*6.28,d=n.t==="genre"?150:90;
-      n.x=(par?par.x:0)+Math.cos(ang)*d;n.y=(par?par.y:0)+Math.sin(ang)*d;
-    }
+    if(p){n.x=p.x;n.y=p.y}
+    else if(n.t==="genre"){const ang=-Math.PI/2+n.gi*2*Math.PI/Math.max(1,G);n.x=Math.cos(ang)*220;n.y=Math.sin(ang)*220}
+    else{const q=pos["g:"+n.gen]||{x:byId["g:"+n.gen].x,y:byId["g:"+n.gen].y},base=Math.atan2(q.y,q.x)+(Math.random()-.5)*1.2;n.x=q.x+Math.cos(base)*110;n.y=q.y+Math.sin(base)*110}
     n.vx=n.vy=0;
   });
-  links=links.map(([s,t,len])=>({s:byId[s],t:byId[t],len,e:el("line",{stroke:byId[t].color||"#4a5199","stroke-width":2,"stroke-opacity":.45},gl)}));
+  links=pairs.map(([s0,t0,len])=>({s:s0,t:t0,len,e:el("line",{stroke:t0.color||"#4a5199","stroke-width":2,"stroke-opacity":.45},gl)}));
   nodes.forEach(n=>{
     const g=el("g",{class:"node"},gn);n.g=g;
     if(n.t==="root"){el("circle",{r:n.r,fill:"#e9ecf8"},g);el("circle",{r:n.r-9,fill:"#14172b"},g);const t=el("text",{y:n.r+22,style:"font-size:16px"},g);t.textContent=center}
     else if(n.t==="genre"){const cl=collapsed.has(n.label);if(cl)el("circle",{r:n.r+6,fill:"none",stroke:n.color,"stroke-width":2,"stroke-dasharray":"4 4"},g);el("circle",{r:n.r,fill:n.color},g);const t=el("text",{y:n.r+(cl?26:18)},g);t.textContent=n.label+(cl?" ▸":"");
-      const c=albums.filter(a=>a.genre===n.label).length;const k=el("text",{y:5,style:"fill:#14172b"},g);k.textContent=c}
+      const c=albums.filter(a=>a.genre===n.label).length,gi=genreImgs[n.label];
+      if(gi){const cid="gc"+nodes.indexOf(n);el("circle",{r:n.r},el("clipPath",{id:cid},defs));
+        el("image",{href:gi,x:-n.r,y:-n.r,width:n.r*2,height:n.r*2,"clip-path":`url(#${cid})`,preserveAspectRatio:"xMidYMid slice"},g);
+        el("circle",{cx:n.r*.72,cy:n.r*.72,r:12,fill:"#14172b",stroke:n.color,"stroke-width":2},g);
+        const k=el("text",{x:n.r*.72,y:n.r*.72+4,style:"font-size:11px"},g);k.textContent=c}
+      else{const k=el("text",{y:5,style:"fill:#14172b"},g);k.textContent=c}}
     else{
       const cid="c"+n.id.replace(/\W/g,"");
       el("circle",{r:n.r,cx:0,cy:0},el("clipPath",{id:cid},defs));
@@ -196,29 +201,82 @@ function build(){
     }
     g.addEventListener("pointerdown",e=>startDrag(e,n));
   });
-  nodes.forEach(n=>n.sel=null);
-  heat(1);
+  if(!fitted){fitted=true;alpha=1;for(let k=0;k<400;k++){step();alpha*=.99}fit();alpha=0}else heat(1);
 }
-function heat(a){alpha=Math.max(alpha,a);if(!raf)raf=requestAnimationFrame(tick)}
-function tick(){
-  raf=0;
-  for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
-    const a=nodes[i],b=nodes[j];let dx=b.x-a.x,dy=b.y-a.y,d2=dx*dx+dy*dy||.01,d=Math.sqrt(d2);
-    const min=a.r+b.r+28;let f=2600/d2;if(d<min)f+=(min-d)*.06;
-    dx/=d;dy/=d;
-    if(!a.fixed){a.vx-=dx*f;a.vy-=dy*f}if(!b.fixed){b.vx+=dx*f;b.vy+=dy*f}
-  }
+let alpha=0;
+function heat(a){alpha=Math.max(alpha,a);kick()}
+function kick(){if(!raf)raf=requestAnimationFrame(tick)}
+function tick(){raf=0;step();paint();alpha*=.99;if(alpha>.02||dragging)raf=requestAnimationFrame(tick)}
+// Physik: Abstoßung, Federn an den Linien, sanfter Zug nach außen und Abstand von Knoten zu fremden Linien.
+// Der gezogene Knoten ignoriert alles andere (durchziehen); beim Loslassen sortiert sich der Rest wieder ein.
+function step(){
+  const N=nodes.length;
+  for(let i=0;i<N;i++){const a=nodes[i];if(a===dragging)continue;
+    for(let j=i+1;j<N;j++){const b=nodes[j];if(b===dragging)continue;
+      let dx=b.x-a.x,dy=b.y-a.y;const d2=dx*dx+dy*dy||.01,d=Math.sqrt(d2),min=a.r+b.r+28;
+      let f=2600/d2;if(d<min)f+=(min-d)*.06;dx/=d;dy/=d;
+      if(!a.fixed){a.vx-=dx*f;a.vy-=dy*f}if(!b.fixed){b.vx+=dx*f;b.vy+=dy*f}
+    }}
   for(const l of links){
     const dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.hypot(dx,dy)||.01,f=(d-l.len)*.02,fx=dx/d*f,fy=dy/d*f;
-    if(!l.s.fixed){l.s.vx+=fx;l.s.vy+=fy}if(!l.t.fixed){l.t.vx-=fx;l.t.vy-=fy}
+    if(!l.s.fixed&&l.s!==dragging){l.s.vx+=fx;l.s.vy+=fy}if(!l.t.fixed&&l.t!==dragging){l.t.vx-=fx;l.t.vy-=fy}
+    if(l.t.t==="album"&&l.t!==dragging){
+      const px=l.s.x,py=l.s.y,pl=Math.hypot(px,py)||1,tx=px+px/pl*l.len,ty=py+py/pl*l.len;
+      l.t.vx+=(tx-l.t.x)*.02;l.t.vy+=(ty-l.t.y)*.02;
+    }
+  }
+  for(const l of links){
+    if(l.s===dragging||l.t===dragging)continue;
+    const sx=l.s.x,sy=l.s.y,vx=l.t.x-sx,vy=l.t.y-sy,L2=vx*vx+vy*vy||1;
+    for(const n of nodes){
+      if(n===l.s||n===l.t||n===dragging)continue;
+      let u=((n.x-sx)*vx+(n.y-sy)*vy)/L2;u=u<0?0:u>1?1:u;
+      let dx=n.x-(sx+u*vx),dy=n.y-(sy+u*vy),d=Math.hypot(dx,dy);const min=n.r+18;
+      if(d<min){
+        if(d<.01){dx=-vy;dy=vx;d=Math.hypot(dx,dy)||1}
+        const f=(min-d)*.25,fx=dx/d*f,fy=dy/d*f;
+        if(!n.fixed){n.vx+=fx;n.vy+=fy}
+        if(!l.s.fixed&&l.s!==dragging){l.s.vx-=fx*(1-u)*.5;l.s.vy-=fy*(1-u)*.5}
+        if(!l.t.fixed&&l.t!==dragging){l.t.vx-=fx*u*.5;l.t.vy-=fy*u*.5}
+      }
+    }
   }
   for(const n of nodes){
-    if(n.fixed||n.drag)continue;
+    if(n.fixed||n===dragging)continue;
     n.vx-=n.x*.002;n.vy-=n.y*.002;
     n.x+=n.vx*alpha;n.y+=n.vy*alpha;n.vx*=.75;n.vy*=.75;
   }
-  paint();alpha*=.985;
-  if(alpha>.02||dragging)raf=requestAnimationFrame(tick);
+  // Harte Korrektur: Knoten dürfen weder einander noch fremde Linien berühren (der gezogene Knoten ist ausgenommen).
+  for(let it=0;it<3;it++){
+    for(let i=0;i<N;i++){const a=nodes[i];if(a===dragging)continue;
+      for(let j=i+1;j<N;j++){const b=nodes[j];if(b===dragging)continue;
+        let dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);const min=a.r+b.r+10;
+        if(d<min){if(d<.01){dx=1;dy=0;d=1}const p=(min-d)/d,wa=a.fixed?0:b.fixed?1:.5,wb=1-wa;
+          a.x-=dx*p*wa;a.y-=dy*p*wa;b.x+=dx*p*wb;b.y+=dy*p*wb}
+      }}
+    for(const l of links){
+      if(l.s===dragging||l.t===dragging)continue;
+      const sx=l.s.x,sy=l.s.y,vx=l.t.x-sx,vy=l.t.y-sy,L2=vx*vx+vy*vy||1;
+      for(const n of nodes){
+        if(n===l.s||n===l.t||n===dragging)continue;
+        let u=((n.x-sx)*vx+(n.y-sy)*vy)/L2;u=u<0?0:u>1?1:u;
+        let dx=n.x-(sx+u*vx),dy=n.y-(sy+u*vy),d=Math.hypot(dx,dy);const min=n.r+8;
+        if(d<min){
+          if(d<.01){dx=-vy;dy=vx;d=Math.hypot(dx,dy)||1}
+          const push=min-d,nx=dx/d*push,ny=dy/d*push,wn=n.fixed?0:.6,ws=l.s.fixed?0:(1-u)*.4,wt=l.t.fixed?0:u*.4,tot=wn+ws+wt||1;
+          if(wn){n.x+=nx*wn/tot;n.y+=ny*wn/tot}
+          if(ws){l.s.x-=nx*ws/tot;l.s.y-=ny*ws/tot}
+          if(wt){l.t.x-=nx*wt/tot;l.t.y-=ny*wt/tot}
+        }
+      }
+    }
+  }
+}
+function fit(){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  nodes.forEach(n=>{x0=Math.min(x0,n.x-n.r-20);x1=Math.max(x1,n.x+n.r+20);y0=Math.min(y0,n.y-n.r-20);y1=Math.max(y1,n.y+n.r+40)});
+  const W=innerWidth,H=innerHeight-70,k=Math.min(1.1,Math.max(.2,Math.min(W/(x1-x0),H/(y1-y0))));
+  T.k=k;T.x=W/2-(x0+x1)/2*k;T.y=70+H/2-(y0+y1)/2*k;paint();
 }
 function paint(){
   for(const n of nodes){n.g.setAttribute("transform",`translate(${n.x},${n.y})`);pos[n.id]={x:n.x,y:n.y}}
@@ -246,7 +304,7 @@ addEventListener("pointermove",e=>{
 });
 function up(e){
   ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;
-  if(dragging){const n=dragging;n.drag=false;dragging=null;if(moved<5)tap(n)}
+  if(dragging){const n=dragging;n.drag=false;dragging=null;if(moved<5)tap(n);else heat(1)}
   else if(panning&&moved<5)closePanel();
   if(!ptrs.size){panning=null;svg.style.cursor="grab"}
 }
@@ -291,7 +349,8 @@ function select(id){
 function renameGenre(o,n){
   if(o===n)return;
   albums.forEach(a=>{if(a.genre===o)a.genre=n});
-  customGenres=customGenres.map(g=>g===o?n:g);
+  customGenres=customGenres.map(g=>g===o?n:g);genreOrder=genreOrder.map(g=>g===o?n:g);
+  if(genreImgs[o]&&!genreImgs[n])genreImgs[n]=genreImgs[o];delete genreImgs[o];
   if(genreColors[o]&&!genreColors[n])genreColors[n]=genreColors[o];delete genreColors[o];
   if(collapsed.delete(o))collapsed.add(n);
   for(const k in genreAlias)if(genreAlias[k]===o)genreAlias[k]=n;
@@ -340,12 +399,18 @@ function editGenre(name){
   const i=mk("input",{id:"gn",value:name||"",maxLength:30,placeholder:"z. B. Lieblingsplatten"});
   const free=PALETTE.find(c=>!allGenres().some(g=>colorOf(g)===c))||PALETTE[0];
   const c=mk("input",{id:"gc",type:"color",value:isNew?free:colorOf(name)});c.style.height="44px";c.style.padding="2px";
+  let gimg=isNew?null:(genreImgs[name]||null);
+  const pv=new Image();pv.alt="Vorschau";pv.style.cssText="max-width:96px;border-radius:50%;margin-bottom:8px;display:"+(gimg?"block":"none");if(gimg)pv.src=gimg;
+  const fi=mk("input",{type:"file",accept:"image/*"});
+  fi.onchange=()=>{const f=fi.files[0];if(f)resize(f,u=>{gimg=u;pv.src=u;pv.style.display="block"},"image/png",200)};
+  const rm=mk("button",{className:"t",textContent:"Grafik entfernen"});rm.style.marginBottom="10px";
+  rm.onclick=()=>{gimg=null;pv.style.display="none";fi.value=""};
   const row=mk("div",{className:"row"});
   const ok=mk("button",{className:"t",textContent:"Speichern"}),cl=mk("button",{className:"t",textContent:"Abbrechen"});
   const apply=()=>{
     const nw=i.value.trim();if(!nw){i.focus();return}
     if(isNew){if(!allGenres().includes(nw))customGenres.push(nw)}else renameGenre(name,nw);
-    genreColors[nw]=c.value;save();build();manageGenres();
+    genreColors[nw]=c.value;if(gimg)genreImgs[nw]=gimg;else delete genreImgs[nw];save();build();manageGenres();
   };
   ok.onclick=apply;cl.onclick=manageGenres;i.onkeydown=e=>{if(e.key==="Enter")apply()};
   row.append(ok);
@@ -355,20 +420,20 @@ function editGenre(name){
       const t=A("Sonstige"),n=albums.filter(a=>a.genre===name).length;
       if(n&&!confirm(n+" Album(en) wandern nach „"+t+"“. Genre „"+name+"“ löschen?"))return;
       albums.forEach(a=>{if(a.genre===name)a.genre=t});
-      customGenres=customGenres.filter(g=>g!==name);delete genreColors[name];collapsed.delete(name);delete pos["g:"+name];
+      customGenres=customGenres.filter(g=>g!==name);delete genreColors[name];delete genreImgs[name];collapsed.delete(name);delete pos["g:"+name];
       save();build();manageGenres();
     };
     row.append(del);
   }
   row.append(cl);
-  panel.append(mk("label",{textContent:isNew?"Neues Genre":"Name des Genres",htmlFor:"gn"}),i,mk("label",{textContent:"Farbe",htmlFor:"gc"}),c,row);
+  panel.append(mk("label",{textContent:isNew?"Neues Genre":"Name des Genres",htmlFor:"gn"}),i,mk("label",{textContent:"Farbe",htmlFor:"gc"}),c,mk("label",{textContent:"Grafik (optional, Bild vom Gerät)"}),fi,pv,rm,row);
   panel.style.display="block";i.focus();
 }
 // ---------- Album selbst anlegen / bearbeiten ----------
-function resize(f,cb){
+function resize(f,cb,type,size){size=size||300;type=type||"image/jpeg";
   const r=new FileReader();
-  r.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(im.width,im.height),cv=document.createElement("canvas");cv.width=cv.height=300;
-    cv.getContext("2d").drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,0,0,300,300);cb(cv.toDataURL("image/jpeg",.82))};
+  r.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(im.width,im.height),cv=document.createElement("canvas");cv.width=cv.height=size;
+    cv.getContext("2d").drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,0,0,size,size);cb(cv.toDataURL(type,.82))};
     im.onerror=()=>alert("Das Bild konnte nicht gelesen werden.");im.src=r.result};
   r.readAsDataURL(f);
 }
@@ -404,6 +469,7 @@ function albumForm(a,pre){
   cl.onclick=()=>isNew?closePanel():select(d.id);
   row.append(ok,cl);panel.append(row);panel.style.display="block";t.focus();
 }
+document.getElementById("mFit").onclick=()=>fit();
 document.getElementById("mAlbum").onclick=()=>albumForm(null,"");
 document.getElementById("mGenre").onclick=()=>manageGenres();
 // ---------- Mitte bearbeiten ----------
@@ -423,7 +489,7 @@ const menu=document.getElementById("menu");
 document.getElementById("menuBtn").onclick=e=>{e.stopPropagation();menu.style.display=menu.style.display==="block"?"none":"block"};
 document.addEventListener("click",()=>menu.style.display="none");
 document.getElementById("mExport").onclick=()=>{
-  const blob=new Blob([JSON.stringify({v:1,center,albums,collapsed:[...collapsed],customGenres,genreColors,genreAlias},null,1)],{type:"application/json"});
+  const blob=new Blob([JSON.stringify({v:1,center,albums,collapsed:[...collapsed],customGenres,genreColors,genreAlias,genreOrder,genreImgs},null,1)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="album-mindmap.json";document.body.append(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
 };
@@ -440,11 +506,13 @@ file.onchange=async()=>{
     customGenres=Array.isArray(d.customGenres)?d.customGenres.map(String):[];
     genreColors=Object.fromEntries(Object.entries(ob(d.genreColors)).filter(([,v])=>/^#[0-9a-f]{6}$/i.test(v)));
     genreAlias=Object.fromEntries(Object.entries(ob(d.genreAlias)).map(([k,v])=>[k,String(v)]));
-    center=String(d.center||"Meine Musik").slice(0,30);collapsed=new Set(d.collapsed||[]);pos={};save();closePanel();build();
+    genreOrder=Array.isArray(d.genreOrder)?d.genreOrder.map(String):[];
+    genreImgs=Object.fromEntries(Object.entries(ob(d.genreImgs)).filter(([,v])=>typeof v==="string"&&/^data:image\//.test(v)));
+    center=String(d.center||"Meine Musik").slice(0,30);collapsed=new Set(d.collapsed||[]);pos={};fitted=false;save();closePanel();build();
   }catch(e){alert("Import fehlgeschlagen: "+e.message)}
 };
 // ---------- Knöpfe ----------
-document.getElementById("clear").onclick=()=>{if(!albums.length||confirm("Alle Alben löschen?")){albums=[];pos={};customGenres=[];genreColors={};genreAlias={};collapsed=new Set();save();closePanel();build()}};
+document.getElementById("clear").onclick=()=>{if(!albums.length||confirm("Alle Alben löschen?")){albums=[];pos={};customGenres=[];genreColors={};genreAlias={};genreOrder=[];genreImgs={};collapsed=new Set();save();closePanel();build()}};
 document.getElementById("demo").onclick=()=>{
   const d=[
    ["Kid A","Radiohead","2000",[["electronic",20],["alternative rock",15]]],
